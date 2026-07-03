@@ -24,6 +24,8 @@ Telegram-бот-CRM для операторов, сопровождающих к
 
 ## Скриншоты
 
+![RoboCompanion v2 — скриншоты](docs/screenshots/cover.jpg)
+
 <table>
 <tr>
 <td><img src="docs/screenshots/01-start.png" width="260" alt="/start — список команд"><br><sub>Список команд (/start)</sub></td>
