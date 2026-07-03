@@ -24,16 +24,23 @@ Telegram-бот-CRM для операторов, сопровождающих к
 
 ## Скриншоты
 
-![RoboCompanion v2 — скриншоты](docs/screenshots/cover.jpg)
+![RoboCompanion v2](docs/screenshots/gallery/01-cover.jpg)
 
 <table>
 <tr>
-<td><img src="docs/screenshots/01-start.png" width="260" alt="/start — список команд"><br><sub>Список команд (/start)</sub></td>
-<td><img src="docs/screenshots/04-today.png" width="260" alt="/today — задачи на сегодня"><br><sub>Дайджест задач (/today)</sub></td>
+<td><img src="docs/screenshots/gallery/02-start.jpg" width="260" alt="/start — список команд"><br><sub>/start — список команд</sub></td>
+<td><img src="docs/screenshots/gallery/03-today.jpg" width="260" alt="/today — задачи на сегодня"><br><sub>/today — дайджест задач</sub></td>
+<td><img src="docs/screenshots/gallery/04-new-dialog.jpg" width="260" alt="/new — диалог добавления клиента"><br><sub>/new — добавление клиента</sub></td>
 </tr>
 <tr>
-<td><img src="docs/screenshots/02-new-dialog.png" width="260" alt="/new — диалог добавления клиента"><br><sub>Диалог добавления клиента (/new)</sub></td>
-<td><img src="docs/screenshots/03-activate.png" width="260" alt="/activate — перевод в статус реальный"><br><sub>Активация клиента (/activate)</sub></td>
+<td><img src="docs/screenshots/gallery/05-activate.jpg" width="260" alt="/activate — перевод в статус реальный"><br><sub>/activate — активация клиента</sub></td>
+<td><img src="docs/screenshots/gallery/06-architecture.jpg" width="260" alt="Архитектура"><br><sub>Архитектура проекта</sub></td>
+<td><img src="docs/screenshots/gallery/07-stages.jpg" width="260" alt="7 этапов сопровождения клиента"><br><sub>7 этапов сопровождения</sub></td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/gallery/08-code.jpg" width="260" alt="Устойчивость к сбоям сети"><br><sub>Ретраи и переподключение</sub></td>
+<td><img src="docs/screenshots/gallery/09-stack.jpg" width="260" alt="Стек технологий"><br><sub>Стек технологий</sub></td>
+<td><img src="docs/screenshots/gallery/10-metrics.jpg" width="260" alt="Результат в цифрах"><br><sub>Результат в цифрах</sub></td>
 </tr>
 </table>
 
