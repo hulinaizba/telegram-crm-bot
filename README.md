@@ -27,6 +27,9 @@ Telegram-бот-CRM для операторов, сопровождающих к
 <table>
 <tr>
 <td><img src="docs/screenshots/01-start.png" width="260" alt="/start — список команд"><br><sub>Список команд (/start)</sub></td>
+<td><img src="docs/screenshots/04-today.png" width="260" alt="/today — задачи на сегодня"><br><sub>Дайджест задач (/today)</sub></td>
+</tr>
+<tr>
 <td><img src="docs/screenshots/02-new-dialog.png" width="260" alt="/new — диалог добавления клиента"><br><sub>Диалог добавления клиента (/new)</sub></td>
 <td><img src="docs/screenshots/03-activate.png" width="260" alt="/activate — перевод в статус реальный"><br><sub>Активация клиента (/activate)</sub></td>
 </tr>
