@@ -1,0 +1,26 @@
+# Секреты — никогда не коммитить
+.env
+robo-companion-*.json
+*-service-account.json
+*credentials*.json
+
+# Логи
+bot.log
+bot.log.*
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+venv/
+.venv/
+env/
+
+# macOS
+.DS_Store
+
+# IDE / инструменты
+.vscode/
+.idea/
+.claude/
