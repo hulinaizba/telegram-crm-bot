@@ -134,10 +134,12 @@ venv/bin/pip install -r requirements-dev.txt
 venv/bin/python -m pytest tests/
 ```
 
-## Деплой на сервер
+## Автозапуск
 
-Пошаговая инструкция (заказ VPS, перенос, автозапуск через systemd) — в
-[`deploy/DEPLOY.md`](deploy/DEPLOY.md).
+- **На Mac (пока разрабатываем/тестируем)** — через `launchd`, работает без
+  открытого Terminal, пока компьютер включён: [`deploy/mac/AUTOSTART.md`](deploy/mac/AUTOSTART.md).
+- **На VPS (продакшен, 24/7)** — заказ сервера, перенос, автозапуск через
+  systemd: [`deploy/DEPLOY.md`](deploy/DEPLOY.md).
 
 ## Лицензия
 

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.robocompanion.bot</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/user/Desktop/robo_companion_v2/venv/bin/python</string>
+        <string>/Users/user/Desktop/robo_companion_v2/bot.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/user/Desktop/robo_companion_v2</string>
+
+    <!-- Запускать сразу при загрузке этого LaunchAgent -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Перезапускать бота, если процесс упал -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <!-- Не перезапускать чаще, чем раз в 10 секунд (защита от цикла падений) -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <!-- Сырые stdout/stderr процесса — отдельно от bot.log с логами самого бота -->
+    <key>StandardOutPath</key>
+    <string>/Users/user/Desktop/robo_companion_v2/launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/user/Desktop/robo_companion_v2/launchd.log</string>
+</dict>
+</plist>
