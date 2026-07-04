@@ -56,6 +56,12 @@ class FakeSheet:
         self.rows[r - 1][c - 1] = v
         self.write_calls += 1
 
+    def delete_rows(self, start_index, end_index=None):
+        self._maybe_fail()
+        end_index = end_index or start_index
+        del self.rows[start_index - 1:end_index]
+        self.write_calls += 1
+
     def append_row(self, row, **kwargs):
         self._maybe_fail()
         self.rows.append(list(row))

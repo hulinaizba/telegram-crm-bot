@@ -169,7 +169,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/contacted @username — отметить контакт\n"
         "/activate @username — статус «реальный» (в broadcast-список)\n"
         "/broadcast — рассылка по реальным клиентам\n"
-        "/reload — перечитать таблицу из Google Sheets\n\n"
+        "/reload — перечитать таблицу из Google Sheets\n"
+        "/delete @username — удалить клиента (с подтверждением)\n\n"
         "Главный инструмент: /today"
     )
 
@@ -368,6 +369,55 @@ async def activate(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "после того, как он отправит боту любое сообщение (chat_id запомнится автоматически)."
         )
     await update.message.reply_text(text)
+
+
+@restricted
+async def delete_client_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("Использование: /delete @username")
+        return
+    username = parse_username(context.args[0])
+    client = repo.get(username)
+    if client is None:
+        await update.message.reply_text("Клиент не найден.")
+        return
+    name = client.get("name") or username
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🗑 Да, удалить", callback_data=f"del:confirm:{username}"),
+        InlineKeyboardButton("Отмена", callback_data=f"del:cancel:{username}"),
+    ]])
+    await update.message.reply_text(
+        f"⚠️ Удалить клиента @{username} ({name})?\n"
+        "Карточка, этап, заметки и строка в таблице будут удалены безвозвратно.\n"
+        "Это действие нельзя отменить.",
+        reply_markup=keyboard,
+    )
+
+
+@restricted
+async def delete_client_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if query.message is None:
+        await query.answer("⚠️ Сообщение устарело — вызови /delete заново", show_alert=True)
+        return
+
+    parts = (query.data or "").split(":", 2)  # del:confirm:username / del:cancel:username
+    if len(parts) != 3:
+        logger.warning("Некорректный callback удаления: %r", query.data)
+        return
+    _, action, username = parts
+
+    if action == "cancel":
+        await query.message.edit_text(f"❌ Удаление @{username} отменено.")
+        return
+
+    if action == "confirm":
+        if await repo.delete_client(username):
+            await query.message.edit_text(f"🗑 Клиент @{username} удалён.")
+        else:
+            await query.message.edit_text(f"Клиент @{username} уже не найден.")
 
 
 # --- Диалог /new: пошаговое добавление клиента ---
@@ -719,7 +769,9 @@ def main():
     application.add_handler(CommandHandler("edit", edit_client))
     application.add_handler(CommandHandler("activate", activate))
     application.add_handler(CommandHandler("reload", reload_clients))
+    application.add_handler(CommandHandler("delete", delete_client_start))
     application.add_handler(CallbackQueryHandler(broadcast_button, pattern=r"^bc:"))
+    application.add_handler(CallbackQueryHandler(delete_client_button, pattern=r"^del:"))
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.ALL, track_client_chat), group=1)
     application.add_error_handler(error_handler)

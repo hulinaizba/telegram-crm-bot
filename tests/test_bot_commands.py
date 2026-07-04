@@ -142,6 +142,53 @@ def test_edit_rejects_unknown_field(bot_module):
     assert "Использование" in u.message.replies[0]
 
 
+# --- /delete ---
+
+def test_delete_asks_confirmation(bot_module):
+    u = FakeUpdate()
+    asyncio.run(bot_module.delete_client_start(u, FakeContext("@ivan")))
+    text = u.message.replies[0]
+    assert "Удалить клиента @ivan" in text
+    assert "нельзя отменить" in text
+
+
+def test_delete_unknown_client(bot_module):
+    u = FakeUpdate()
+    asyncio.run(bot_module.delete_client_start(u, FakeContext("@nobody")))
+    assert "не найден" in u.message.replies[0]
+
+
+def test_delete_requires_argument(bot_module):
+    u = FakeUpdate()
+    asyncio.run(bot_module.delete_client_start(u, FakeContext()))
+    assert "Использование" in u.message.replies[0]
+
+
+def test_delete_confirm_removes_client(bot_module, repo, fake_sheet):
+    u = FakeUpdate()
+    u.callback_query = FakeCallbackQuery("del:confirm:ivan")
+    asyncio.run(bot_module.delete_client_button(u, FakeContext()))
+    assert "ivan" not in repo
+    assert "удалён" in u.callback_query.message.edits[-1]
+    assert len(fake_sheet.rows) == 2  # строка реально исчезла из таблицы
+
+
+def test_delete_cancel_keeps_client(bot_module, repo):
+    u = FakeUpdate()
+    u.callback_query = FakeCallbackQuery("del:cancel:ivan")
+    asyncio.run(bot_module.delete_client_button(u, FakeContext()))
+    assert "ivan" in repo
+    assert "отменено" in u.callback_query.message.edits[-1]
+
+
+def test_delete_confirm_already_gone(bot_module, repo):
+    asyncio.run(repo.delete_client("ivan"))
+    u = FakeUpdate()
+    u.callback_query = FakeCallbackQuery("del:confirm:ivan")
+    asyncio.run(bot_module.delete_client_button(u, FakeContext()))
+    assert "уже не найден" in u.callback_query.message.edits[-1]
+
+
 # --- /reload и авто-перечитывание ---
 
 def test_reload_command(bot_module, repo, fake_sheet):

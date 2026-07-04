@@ -256,6 +256,47 @@ class ClientRepository:
         await asyncio.to_thread(self._append_row_with_retries, username)
         return True
 
+    async def delete_client(self, username: str) -> bool:
+        """Удаляет карточку клиента из памяти и строку из таблицы."""
+        if username not in self._clients:
+            return False
+        del self._clients[username]
+        await asyncio.to_thread(self._delete_row_with_retries, username)
+        return True
+
+    def _delete_row_with_retries(self, username: str) -> bool:
+        """Удаление строки с повторными попытками при сбоях API."""
+        for attempt in range(1, RETRY_ATTEMPTS + 1):
+            try:
+                return self._delete_row(username)
+            except Exception as e:
+                logger.warning(
+                    "Попытка %d/%d удаления строки @%s не удалась: %s",
+                    attempt, RETRY_ATTEMPTS, username, e,
+                )
+                if attempt < RETRY_ATTEMPTS:
+                    time.sleep(RETRY_BASE_DELAY * attempt)
+                    self._reconnect()
+        logger.error("Строка @%s не удалена из таблицы (удалена только из памяти)", username)
+        return False
+
+    def _delete_row(self, username: str) -> bool:
+        """Синхронное удаление строки. Вызывается только через ретрай-обёртку."""
+        if not self._sheet:
+            logger.warning("Таблица недоступна — @%s удалён только из памяти", username)
+            return False
+
+        row = self._find_row(username)
+        if not row:
+            logger.warning("Строка клиента @%s не найдена в таблице для удаления", username)
+            return False
+
+        with self._lock:
+            self._sheet.delete_rows(row)
+        self._rows.pop(username, None)
+        logger.info("Клиент @%s удалён из таблицы (строка %d)", username, row)
+        return True
+
     def _append_row_with_retries(self, username: str) -> bool:
         """Добавление строки клиента с повторными попытками при сбоях API."""
         for attempt in range(1, RETRY_ATTEMPTS + 1):

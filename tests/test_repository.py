@@ -70,6 +70,55 @@ def test_add_client_rejects_duplicate(repo):
     assert not asyncio.run(repo.add_client("ivan", {"name": "Дубль"}))
 
 
+def test_delete_client_removes_from_memory_and_sheet(repo, fake_sheet):
+    ok = asyncio.run(repo.delete_client("ivan"))
+    assert ok
+    assert "ivan" not in repo
+    assert len(repo) == 1
+    # строка Ивана (2-я) удалена, Пётр остался единственной строкой данных
+    assert len(fake_sheet.rows) == 2
+    assert fake_sheet.rows[1][0] == "@petr"
+
+
+def test_delete_client_unknown_returns_false(repo, fake_sheet):
+    assert not asyncio.run(repo.delete_client("nobody"))
+    assert len(fake_sheet.rows) == 3  # ничего не изменилось
+
+
+def test_delete_client_shifts_other_rows_correctly(repo, fake_sheet):
+    # добавляем третьего клиента, удаляем первого — строки должны сдвинуться,
+    # а поиск по username подхватить сдвиг благодаря _find_row
+    asyncio.run(repo.add_client("maria", {"name": "Мария"}))
+    asyncio.run(repo.delete_client("ivan"))
+    assert "petr" in repo and "maria" in repo
+    # после удаления первой строки данных строки Петра и Марии сдвинулись на 1 вверх;
+    # проверяем, что запись по username всё ещё попадает в правильную строку
+    asyncio.run(repo.mark_contact("maria"))
+    maria_row = next(row for row in fake_sheet.rows if row[0] == "@maria")
+    assert maria_row[9] != ""  # last_contact записан в правильную (сдвинутую) строку
+
+
+def test_delete_client_survives_transient_failures(monkeypatch):
+    sheet = FakeSheet(failures=2)
+    monkeypatch.setattr(repository, "get_sheet", lambda: sheet)
+    repo = repository.ClientRepository()
+    repo.load()
+    assert asyncio.run(repo.delete_client("ivan"))
+    assert len(sheet.rows) == 2
+
+
+def test_delete_client_total_failure_keeps_memory_consistent(monkeypatch):
+    sheet = FakeSheet(failures=999)
+    monkeypatch.setattr(repository, "get_sheet", lambda: sheet)
+    repo = repository.ClientRepository()
+    repo.load()
+    # запись в таблицу не удалась, но из памяти клиент всё равно должен исчезнуть —
+    # иначе бот покажет клиента как существующего, а таблица будет главным источником правды
+    assert asyncio.run(repo.delete_client("ivan"))
+    assert "ivan" not in repo
+    assert len(sheet.rows) == 3  # строка в таблице осталась (сбой записи)
+
+
 def test_write_survives_transient_failures(monkeypatch):
     # первые 2 записи падают — третья попытка должна пройти
     sheet = FakeSheet(failures=2)
