@@ -183,6 +183,27 @@ def test_parse_reminder_time_invalid(monkeypatch):
     assert config.parse_reminder_time() is None
 
 
+def test_parse_reminder_time_uses_configured_zone_not_server_zone(monkeypatch):
+    # Регрессия: сервер может жить в UTC, а REMINDER_TIME должен пониматься
+    # в часовом поясе оператора (REMINDER_TIMEZONE), а не сервера.
+    monkeypatch.setattr(config, "REMINDER_TIME", "08:00")
+    monkeypatch.setattr(config, "REMINDER_TIMEZONE", "Asia/Jerusalem")
+    t = config.parse_reminder_time()
+    assert (t.hour, t.minute) == (8, 0)
+    assert str(t.tzinfo) == "Asia/Jerusalem"
+
+    # Другой оператор — другой часовой пояс, тоже должно работать
+    monkeypatch.setattr(config, "REMINDER_TIMEZONE", "Europe/Moscow")
+    t2 = config.parse_reminder_time()
+    assert str(t2.tzinfo) == "Europe/Moscow"
+
+
+def test_parse_reminder_time_unknown_zone_disables_reminder(monkeypatch):
+    monkeypatch.setattr(config, "REMINDER_TIME", "08:00")
+    monkeypatch.setattr(config, "REMINDER_TIMEZONE", "Мимо/Не_существует")
+    assert config.parse_reminder_time() is None
+
+
 # --- Ротация логов ---
 
 def test_file_handler_is_rotating(monkeypatch, tmp_path):

@@ -2,8 +2,9 @@
 
 import os
 import logging
-from datetime import datetime, time as dt_time
+from datetime import time as dt_time
 from logging.handlers import RotatingFileHandler
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
@@ -41,6 +42,11 @@ RELOAD_INTERVAL_MINUTES = _int_env("RELOAD_INTERVAL_MINUTES", 10)
 # Время ежедневного напоминания операторам в формате ЧЧ:ММ (пусто — отключено)
 REMINDER_TIME = os.getenv("REMINDER_TIME", "08:00")
 
+# Часовой пояс, в котором понимается REMINDER_TIME (IANA-имя, например Asia/Jerusalem,
+# Europe/Moscow). НЕ зависит от того, в каком часовом поясе живёт сам сервер —
+# поэтому переезд бота на VPS в другой стране не сдвигает время напоминания.
+REMINDER_TIMEZONE = os.getenv("REMINDER_TIMEZONE", "Asia/Jerusalem")
+
 # --- Логирование ---
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 LOG_FILE = os.getenv("LOG_FILE", "bot.log")
@@ -49,15 +55,22 @@ LOG_BACKUP_COUNT = _int_env("LOG_BACKUP_COUNT", 3)     # bot.log.1 ... bot.log.3
 
 
 def parse_reminder_time():
-    """Возвращает время напоминания (datetime.time с локальным поясом) или None."""
+    """Возвращает время напоминания (datetime.time с поясом REMINDER_TIMEZONE) или None.
+
+    Пояс берётся из REMINDER_TIMEZONE (IANA-имя), а не из системных настроек
+    сервера, поэтому корректно учитывает переход на летнее/зимнее время и не
+    зависит от того, где физически размещён сервер.
+    """
     raw = (REMINDER_TIME or "").strip()
     if not raw:
         return None
     try:
         hours, minutes = raw.split(":")
-        local_tz = datetime.now().astimezone().tzinfo
-        return dt_time(int(hours), int(minutes), tzinfo=local_tz)
-    except (ValueError, AttributeError):
+        tz = ZoneInfo(REMINDER_TIMEZONE)
+        return dt_time(int(hours), int(minutes), tzinfo=tz)
+    except Exception:
+        # Некорректный REMINDER_TIME или неизвестное имя пояса — отключаем
+        # напоминание, а не падаем при старте бота.
         return None
 
 
