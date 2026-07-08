@@ -142,6 +142,70 @@ def test_edit_rejects_unknown_field(bot_module):
     assert "Использование" in u.message.replies[0]
 
 
+# --- /idea и /ideas ---
+
+def test_idea_requires_text(bot_module):
+    u = FakeUpdate()
+    asyncio.run(bot_module.add_idea(u, FakeContext()))
+    assert "Использование" in u.message.replies[0]
+
+
+def test_idea_saves_and_confirms(bot_module, monkeypatch):
+    saved = {}
+
+    async def fake_add_idea(author, text):
+        saved["author"] = author
+        saved["text"] = text
+        return True
+
+    monkeypatch.setattr(bot_module.ideas, "add_idea", fake_add_idea)
+    u = FakeUpdate()
+    asyncio.run(bot_module.add_idea(u, FakeContext("Добавить", "экспорт", "в", "PDF")))
+    assert "записана" in u.message.replies[0]
+    assert saved["text"] == "Добавить экспорт в PDF"
+
+
+def test_idea_reports_save_failure_gracefully(bot_module, monkeypatch):
+    async def fake_add_idea(author, text):
+        return False
+
+    monkeypatch.setattr(bot_module.ideas, "add_idea", fake_add_idea)
+    u = FakeUpdate()
+    asyncio.run(bot_module.add_idea(u, FakeContext("текст")))
+    assert "не потеряется" in u.message.replies[0]
+
+
+def test_ideas_lists_recent(bot_module, monkeypatch):
+    async def fake_get_recent(limit=10):
+        return [["2026-07-01 10:00", "Иван", "Идея про экспорт"]]
+
+    monkeypatch.setattr(bot_module.ideas, "get_recent_ideas", fake_get_recent)
+    u = FakeUpdate()
+    asyncio.run(bot_module.show_ideas(u, FakeContext()))
+    assert "Идея про экспорт" in u.message.replies[0]
+    assert "Иван" in u.message.replies[0]
+
+
+def test_ideas_empty_list(bot_module, monkeypatch):
+    async def fake_get_recent(limit=10):
+        return []
+
+    monkeypatch.setattr(bot_module.ideas, "get_recent_ideas", fake_get_recent)
+    u = FakeUpdate()
+    asyncio.run(bot_module.show_ideas(u, FakeContext()))
+    assert "Пока нет" in u.message.replies[0]
+
+
+def test_ideas_sheet_unavailable(bot_module, monkeypatch):
+    async def fake_get_recent(limit=10):
+        return None
+
+    monkeypatch.setattr(bot_module.ideas, "get_recent_ideas", fake_get_recent)
+    u = FakeUpdate()
+    asyncio.run(bot_module.show_ideas(u, FakeContext()))
+    assert "не удалось" in u.message.replies[0].lower()
+
+
 # --- /delete ---
 
 def test_delete_asks_confirmation(bot_module):

@@ -10,9 +10,11 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 import config  # noqa: E402
+import ideas  # noqa: E402
 import repository  # noqa: E402
 
 repository.RETRY_BASE_DELAY = 0.01  # ускоряем ретраи в тестах
+ideas.RETRY_BASE_DELAY = 0.01
 
 HEADERS = [
     "username", "имя", "опыт", "терминал", "депозит",

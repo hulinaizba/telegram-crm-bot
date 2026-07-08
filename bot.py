@@ -18,6 +18,7 @@ from telegram.ext import (
 )
 
 import config
+import ideas
 from repository import STATUS_ACTIVE, ClientRepository
 from stages import (
     STAGES,
@@ -170,7 +171,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/activate @username — статус «реальный» (в broadcast-список)\n"
         "/broadcast — рассылка по реальным клиентам\n"
         "/reload — перечитать таблицу из Google Sheets\n"
-        "/delete @username — удалить клиента (с подтверждением)\n\n"
+        "/delete @username — удалить клиента (с подтверждением)\n"
+        "/idea текст — записать идею по улучшению бота на будущее\n"
+        "/ideas — посмотреть последние записанные идеи\n\n"
         "Главный инструмент: /today"
     )
 
@@ -349,6 +352,43 @@ async def reload_clients(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     await update.message.reply_text(f"🔄 Таблица перечитана: {count} клиентов.")
+
+
+@restricted
+async def add_idea(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("Использование: /idea текст предложения")
+        return
+    text = " ".join(context.args).strip()
+    if not text:
+        await update.message.reply_text("Использование: /idea текст предложения")
+        return
+    author = f"@{update.effective_user.username}" if update.effective_user.username else f"id{update.effective_user.id}"
+    if await ideas.add_idea(author, text):
+        await update.message.reply_text("💡 Идея записана — рассмотрим её при следующем улучшении бота.")
+    else:
+        await update.message.reply_text(
+            "⚠️ Не удалось сохранить идею в таблицу (проблема с подключением), "
+            "но она осталась в логах бота — не потеряется."
+        )
+
+
+@restricted
+async def show_ideas(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    rows = await ideas.get_recent_ideas(limit=10)
+    if rows is None:
+        await update.message.reply_text("⚠️ Не удалось прочитать журнал идей — таблица недоступна.")
+        return
+    if not rows:
+        await update.message.reply_text("Пока нет ни одной записанной идеи. Добавить: /idea текст")
+        return
+    text = "💡 Последние идеи:\n\n"
+    for row in rows:
+        date = row[0] if len(row) > 0 else "—"
+        author = row[1] if len(row) > 1 else "—"
+        idea_text = row[2] if len(row) > 2 else "—"
+        text += f"• {idea_text}\n   ({author}, {date})\n\n"
+    await update.message.reply_text(text)
 
 
 @restricted
@@ -770,6 +810,8 @@ def main():
     application.add_handler(CommandHandler("activate", activate))
     application.add_handler(CommandHandler("reload", reload_clients))
     application.add_handler(CommandHandler("delete", delete_client_start))
+    application.add_handler(CommandHandler("idea", add_idea))
+    application.add_handler(CommandHandler("ideas", show_ideas))
     application.add_handler(CallbackQueryHandler(broadcast_button, pattern=r"^bc:"))
     application.add_handler(CallbackQueryHandler(delete_client_button, pattern=r"^del:"))
     application.add_handler(CallbackQueryHandler(button_handler))

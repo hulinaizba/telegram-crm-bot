@@ -34,6 +34,8 @@ ALLOWED_USERS = [
 GOOGLE_CREDENTIALS_FILE = os.getenv("GOOGLE_CREDENTIALS_FILE", "")
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID", "")
 WORKSHEET_NAME = os.getenv("WORKSHEET_NAME", "Клиенты")
+# Отдельный лист той же таблицы — журнал идей операторов (/idea, /ideas)
+IDEAS_WORKSHEET_NAME = os.getenv("IDEAS_WORKSHEET_NAME", "Идеи")
 
 # Автоматическое перечитывание таблицы каждые N минут (0 — отключено)
 RELOAD_INTERVAL_MINUTES = _int_env("RELOAD_INTERVAL_MINUTES", 10)
