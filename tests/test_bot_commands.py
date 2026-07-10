@@ -76,6 +76,124 @@ def test_today_ignores_future_reminder(bot_module, repo):
     assert repo.get("petr")["reminder_date"] == future  # не наступило — не тронуто
 
 
+# --- /clients: интерактивная карточка и редактирование кнопками ---
+
+def test_clients_list_shows_buttons(bot_module, repo):
+    u = FakeUpdate()
+    asyncio.run(bot_module.clients_list(u, FakeContext()))
+    assert "Список всех клиентов" in u.message.replies[0]
+    markup = u.message.last_markup
+    callback_data = [btn.callback_data for row in markup.inline_keyboard for btn in row]
+    assert callback_data == [f"cl:card:{u}" for u, _ in repo.items()]
+
+
+def test_client_card_shows_summary_and_menu(bot_module):
+    u = FakeUpdate()
+    u.callback_query = FakeCallbackQuery("cl:card:ivan")
+    asyncio.run(bot_module.client_card_button(u, FakeContext()))
+    edited = u.callback_query.message.edits[-1]
+    assert "Сводка по @ivan" in edited
+
+
+def test_client_card_unknown_client(bot_module):
+    u = FakeUpdate()
+    u.callback_query = FakeCallbackQuery("cl:card:nobody")
+    asyncio.run(bot_module.client_card_button(u, FakeContext()))
+    assert "не найден" in u.callback_query.message.edits[-1]
+
+
+def test_client_edit_field_prompts_for_value(bot_module):
+    ctx = FakeContext()
+    u = FakeUpdate()
+    u.callback_query = FakeCallbackQuery("cl:edit:deposit:ivan")
+    state = asyncio.run(bot_module.client_edit_start(u, ctx))
+    assert state == bot_module.CLIENT_EDIT_VALUE
+    assert ctx.user_data["client_edit"] == {"username": "ivan", "field": "deposit"}
+    prompt = u.callback_query.message.replies[0]
+    assert "Депозит" in prompt and "500" in prompt  # текущее значение подсказано
+
+
+def test_client_edit_note_prompts_for_value(bot_module):
+    ctx = FakeContext()
+    u = FakeUpdate()
+    u.callback_query = FakeCallbackQuery("cl:note:ivan")
+    state = asyncio.run(bot_module.client_edit_start(u, ctx))
+    assert state == bot_module.CLIENT_EDIT_VALUE
+    assert ctx.user_data["client_edit"] == {"username": "ivan", "field": None}
+    assert "заметку" in u.callback_query.message.replies[0]
+
+
+def test_client_edit_apply_saves_field(bot_module, repo, fake_sheet):
+    ctx = FakeContext()
+    ctx.user_data["client_edit"] = {"username": "ivan", "field": "deposit"}
+    u = FakeUpdate("1500")
+    state = asyncio.run(bot_module.client_edit_apply(u, ctx))
+    assert state == ConversationHandler.END
+    assert repo.get("ivan")["deposit"] == "1500"
+    assert "Сохранено" in u.message.replies[0]
+    assert "Сводка по @ivan" in u.message.replies[1]
+    assert "client_edit" not in ctx.user_data
+
+
+def test_client_edit_apply_saves_note(bot_module, repo):
+    ctx = FakeContext()
+    ctx.user_data["client_edit"] = {"username": "ivan", "field": None}
+    u = FakeUpdate("Просил перезвонить")
+    state = asyncio.run(bot_module.client_edit_apply(u, ctx))
+    assert state == ConversationHandler.END
+    assert "Просил перезвонить" in repo.get("ivan")["notes"]
+    assert "Заметка добавлена" in u.message.replies[0]
+
+
+def test_client_edit_apply_empty_value_not_saved(bot_module, repo):
+    ctx = FakeContext()
+    ctx.user_data["client_edit"] = {"username": "ivan", "field": "deposit"}
+    u = FakeUpdate("   ")
+    state = asyncio.run(bot_module.client_edit_apply(u, ctx))
+    assert state == ConversationHandler.END
+    assert repo.get("ivan")["deposit"] == "500"  # не изменилось
+    assert "Пустое значение" in u.message.replies[0]
+
+
+def test_client_edit_cancel(bot_module):
+    ctx = FakeContext()
+    ctx.user_data["client_edit"] = {"username": "ivan", "field": "deposit"}
+    u = FakeUpdate()
+    state = asyncio.run(bot_module.client_edit_cancel(u, ctx))
+    assert state == ConversationHandler.END
+    assert "client_edit" not in ctx.user_data
+    assert "Отменено" in u.message.replies[0]
+
+
+def test_client_stage_menu_shows_stages(bot_module):
+    u = FakeUpdate()
+    u.callback_query = FakeCallbackQuery("cl:stagemenu:ivan")
+    asyncio.run(bot_module.client_stage_menu_button(u, FakeContext()))
+    assert "этап для @ivan" in u.callback_query.message.edits[-1]
+
+
+def test_client_setstage_updates_and_shows_card(bot_module, repo, fake_sheet):
+    u = FakeUpdate()
+    u.callback_query = FakeCallbackQuery("cl:setstage:ivan:5")
+    asyncio.run(bot_module.client_setstage_button(u, FakeContext()))
+    assert repo.get("ivan")["stage"] == "риск_контроль"
+    assert "Сводка по @ivan" in u.callback_query.message.edits[-1]
+
+
+def test_client_setstage_invalid_number(bot_module):
+    u = FakeUpdate()
+    u.callback_query = FakeCallbackQuery("cl:setstage:ivan:9")
+    asyncio.run(bot_module.client_setstage_button(u, FakeContext()))
+    assert "некорректный этап" in u.callback_query.message.edits[-1].lower()
+
+
+def test_client_back_button_returns_to_list(bot_module):
+    u = FakeUpdate()
+    u.callback_query = FakeCallbackQuery("cl:back")
+    asyncio.run(bot_module.client_back_button(u, FakeContext()))
+    assert "Список всех клиентов" in u.callback_query.message.edits[-1]
+
+
 # --- /remind ---
 
 def test_remind_sets_reminder_date(bot_module, repo, fake_sheet):

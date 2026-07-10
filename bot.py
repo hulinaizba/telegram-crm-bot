@@ -52,10 +52,24 @@ EDITABLE_FIELDS = {
 NEW_TOTAL_STEPS = 8
 
 # Быстрые варианты в шаге настройки напоминания при /new
-REMINDER_QUICK_DAYS = (1, 2, 3, 4, 5)
+# 1-7: весь цикл сопровождения клиента укладывается примерно в неделю
+REMINDER_QUICK_DAYS = (1, 2, 3, 4, 5, 6, 7)
 
 # Состояние диалога /broadcast
 BROADCAST_TEXT = 10
+
+# Состояние мини-диалога редактирования клиента из /clients (карточка -> поле -> значение)
+CLIENT_EDIT_VALUE = 20
+
+# Поля, доступные для редактирования кнопкой из карточки клиента
+CLIENT_EDIT_FIELDS = [
+    ("name", "✏️ Имя"),
+    ("experience", "🎓 Опыт"),
+    ("terminal", "💻 Терминал"),
+    ("deposit", "💰 Депозит"),
+    ("format", "⚙️ Формат торговли"),
+]
+CLIENT_EDIT_FIELD_LABELS = dict(CLIENT_EDIT_FIELDS)
 
 
 # --- Состояние ---
@@ -200,7 +214,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/search текст — поиск клиента\n"
         "/edit @username поле значение — редактировать\n"
         "/complete @username — сводка\n"
-        "/clients — список всех\n"
+        "/clients — список всех (кнопками: открыть карточку и отредактировать)\n"
         "/contacted @username — отметить контакт\n"
         "/activate @username — статус «реальный» (в broadcast-список)\n"
         "/broadcast — рассылка по реальным клиентам\n"
@@ -225,16 +239,196 @@ async def today(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, reply_markup=markup)
 
 
+def build_clients_list_text() -> str:
+    text = "📋 Список всех клиентов\n\n"
+    for u, d in repo.items():
+        status = " ⭐" if str(d.get("status", "")).strip().lower() == STATUS_ACTIVE else ""
+        text += f"@{u} — {d.get('name')} — {d.get('stage')}{status}\n"
+    text += "\nВыбери клиента кнопкой, чтобы открыть карточку и отредактировать:"
+    return text
+
+
+def build_clients_keyboard() -> InlineKeyboardMarkup:
+    keyboard = [
+        [InlineKeyboardButton(f"@{u} — {d.get('name') or '—'}", callback_data=f"cl:card:{u}")]
+        for u, d in repo.items()
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
 @restricted
 async def clients_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not len(repo):
         await update.message.reply_text("Пока нет клиентов.")
         return
-    text = "📋 Список всех клиентов\n\n"
-    for u, d in repo.items():
-        status = " ⭐" if str(d.get("status", "")).strip().lower() == STATUS_ACTIVE else ""
-        text += f"@{u} — {d.get('name')} — {d.get('stage')}{status}\n"
-    await update.message.reply_text(text)
+    await update.message.reply_text(build_clients_list_text(), reply_markup=build_clients_keyboard())
+
+
+# --- Карточка клиента из /clients: просмотр + редактирование кнопками ---
+
+def build_client_card_keyboard(username: str) -> InlineKeyboardMarkup:
+    keyboard = [
+        [InlineKeyboardButton(label, callback_data=f"cl:edit:{field}:{username}")]
+        for field, label in CLIENT_EDIT_FIELDS
+    ]
+    keyboard.append([InlineKeyboardButton("📝 Добавить заметку", callback_data=f"cl:note:{username}")])
+    keyboard.append([InlineKeyboardButton("📊 Изменить этап", callback_data=f"cl:stagemenu:{username}")])
+    keyboard.append([InlineKeyboardButton("🔙 К списку клиентов", callback_data="cl:back")])
+    return InlineKeyboardMarkup(keyboard)
+
+
+def build_stage_menu_keyboard(username: str) -> InlineKeyboardMarkup:
+    keyboard = [
+        [InlineKeyboardButton(f"{i + 1}. {get_stage_name(s)}", callback_data=f"cl:setstage:{username}:{i + 1}")]
+        for i, s in enumerate(STAGES)
+    ]
+    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data=f"cl:card:{username}")])
+    return InlineKeyboardMarkup(keyboard)
+
+
+@restricted
+async def client_card_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.message is None:
+        await query.answer("⚠️ Список устарел — вызови /clients заново", show_alert=True)
+        return
+    username = (query.data or "").split(":", 2)[-1]
+    client = repo.get(username)
+    if client is None:
+        await query.message.edit_text("Клиент не найден.")
+        return
+    await query.message.edit_text(
+        build_summary(username, client),
+        reply_markup=build_client_card_keyboard(username),
+    )
+
+
+@restricted
+async def client_stage_menu_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.message is None:
+        return
+    username = (query.data or "").split(":", 2)[-1]
+    if username not in repo:
+        await query.message.edit_text("Клиент не найден.")
+        return
+    await query.message.edit_text(
+        f"Выбери этап для @{username}:",
+        reply_markup=build_stage_menu_keyboard(username),
+    )
+
+
+@restricted
+async def client_setstage_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.message is None:
+        return
+    parts = (query.data or "").split(":")  # cl:setstage:{username}:{N}
+    if len(parts) != 4 or not parts[3].isdigit():
+        logger.warning("Некорректный callback смены этапа: %r", query.data)
+        return
+    username, number = parts[2], int(parts[3])
+    if username not in repo or not 1 <= number <= TOTAL_STAGES:
+        await query.message.edit_text("Клиент не найден или некорректный этап.")
+        return
+    stage = STAGES[number - 1]
+    await repo.set_stage(username, stage)
+    await query.message.edit_text(
+        build_summary(username, repo.get(username)),
+        reply_markup=build_client_card_keyboard(username),
+    )
+
+
+@restricted
+async def client_back_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.message is None:
+        return
+    if not len(repo):
+        await query.message.edit_text("Пока нет клиентов.")
+        return
+    await query.message.edit_text(build_clients_list_text(), reply_markup=build_clients_keyboard())
+
+
+@restricted
+async def client_edit_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Точка входа мини-диалога: нажатие «Имя/Депозит/.../Заметка» -> запрос текста."""
+    query = update.callback_query
+    await query.answer()
+    if query.message is None:
+        await query.answer("⚠️ Карточка устарела — открой её заново из /clients", show_alert=True)
+        return ConversationHandler.END
+
+    parts = (query.data or "").split(":")
+    if parts[1] == "note":
+        # cl:note:{username}
+        username = parts[2]
+        field = None
+        prompt_name = "заметку"
+    else:
+        # cl:edit:{field}:{username}
+        field = parts[2]
+        username = parts[3]
+        prompt_name = CLIENT_EDIT_FIELD_LABELS.get(field, field)
+
+    client = repo.get(username)
+    if client is None:
+        await query.message.edit_text("Клиент не найден.")
+        return ConversationHandler.END
+
+    context.user_data["client_edit"] = {"username": username, "field": field}
+    current = "" if field is None else f" (сейчас: {client.get(field) or '—'})"
+    await query.message.reply_text(f"Введи новое значение — {prompt_name}{current}:\n\nОтмена — /cancel")
+    return CLIENT_EDIT_VALUE
+
+
+async def client_edit_apply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pending = context.user_data.pop("client_edit", None)
+    if not pending:
+        return ConversationHandler.END
+    username, field = pending["username"], pending["field"]
+    value = update.message.text.strip()
+    if not value:
+        await update.message.reply_text("Пустое значение не сохранено.")
+        return ConversationHandler.END
+
+    if field is None:
+        await repo.add_note(username, value)
+        await update.message.reply_text("✅ Заметка добавлена.")
+    else:
+        await repo.update_field(username, field, value)
+        await update.message.reply_text("✅ Сохранено.")
+
+    client = repo.get(username)
+    if client:
+        await update.message.reply_text(
+            build_summary(username, client),
+            reply_markup=build_client_card_keyboard(username),
+        )
+    return ConversationHandler.END
+
+
+@restricted
+async def client_edit_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.pop("client_edit", None)
+    await update.message.reply_text("❌ Отменено.")
+    return ConversationHandler.END
+
+
+def build_client_edit_handler() -> ConversationHandler:
+    """Мини-диалог: кнопка поля на карточке клиента -> текст нового значения."""
+    text_input = filters.TEXT & ~filters.COMMAND
+    return ConversationHandler(
+        entry_points=[CallbackQueryHandler(client_edit_start, pattern=r"^cl:(edit|note):")],
+        states={
+            CLIENT_EDIT_VALUE: [MessageHandler(text_input, client_edit_apply)],
+        },
+        fallbacks=[CommandHandler("cancel", client_edit_cancel)],
+    )
 
 
 @restricted
@@ -593,8 +787,11 @@ async def new_client_format(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def _reminder_keyboard() -> InlineKeyboardMarkup:
-    row = [InlineKeyboardButton(str(n), callback_data=f"newrem:{n}") for n in REMINDER_QUICK_DAYS]
-    return InlineKeyboardMarkup([row, [InlineKeyboardButton("Без напоминания", callback_data="newrem:skip")]])
+    buttons = [InlineKeyboardButton(str(n), callback_data=f"newrem:{n}") for n in REMINDER_QUICK_DAYS]
+    half = (len(buttons) + 1) // 2
+    rows = [buttons[:half], buttons[half:]]
+    rows.append([InlineKeyboardButton("Без напоминания", callback_data="newrem:skip")])
+    return InlineKeyboardMarkup(rows)
 
 
 async def new_client_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -934,6 +1131,7 @@ def main():
 
     application.add_handler(build_new_client_handler())
     application.add_handler(build_broadcast_handler())
+    application.add_handler(build_client_edit_handler())
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("today", today))
     application.add_handler(CommandHandler("clients", clients_list))
@@ -953,6 +1151,10 @@ def main():
     application.add_handler(CommandHandler("remind", remind))
     application.add_handler(CallbackQueryHandler(broadcast_button, pattern=r"^bc:"))
     application.add_handler(CallbackQueryHandler(delete_client_button, pattern=r"^del:"))
+    application.add_handler(CallbackQueryHandler(client_card_button, pattern=r"^cl:card:"))
+    application.add_handler(CallbackQueryHandler(client_stage_menu_button, pattern=r"^cl:stagemenu:"))
+    application.add_handler(CallbackQueryHandler(client_setstage_button, pattern=r"^cl:setstage:"))
+    application.add_handler(CallbackQueryHandler(client_back_button, pattern=r"^cl:back$"))
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.ALL, track_client_chat), group=1)
     application.add_error_handler(error_handler)

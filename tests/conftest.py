@@ -76,15 +76,19 @@ class FakeMessage:
         self.replies = []
         self.edits = []
         self.markups = []
+        self.last_markup = None  # reply_markup, переданный в последний reply_text/edit_text
 
     async def reply_text(self, text, **kwargs):
         self.replies.append(text)
+        self.last_markup = kwargs.get("reply_markup")
 
     async def edit_text(self, text, **kwargs):
         self.edits.append(text)
+        self.last_markup = kwargs.get("reply_markup")
 
     async def edit_reply_markup(self, reply_markup=None, **kwargs):
         self.markups.append(reply_markup)
+        self.last_markup = reply_markup
 
 
 class FakeUser:
