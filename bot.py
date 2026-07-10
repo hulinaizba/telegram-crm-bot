@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -45,7 +45,14 @@ EDITABLE_FIELDS = {
 }
 
 # Состояния диалога /new
-NEW_USERNAME, NEW_NAME, NEW_EXPERIENCE, NEW_TERMINAL, NEW_DEPOSIT, NEW_FORMAT = range(6)
+(
+    NEW_USERNAME, NEW_NAME, NEW_EXPERIENCE, NEW_TERMINAL, NEW_DEPOSIT,
+    NEW_FORMAT, NEW_NOTE, NEW_REMINDER,
+) = range(8)
+NEW_TOTAL_STEPS = 8
+
+# Быстрые варианты в шаге настройки напоминания при /new
+REMINDER_QUICK_DAYS = (1, 2, 3, 4, 5)
 
 # Состояние диалога /broadcast
 BROADCAST_TEXT = 10
@@ -72,6 +79,8 @@ def build_summary(username: str, client: dict) -> str:
     """Собирает сводку по клиенту для передачи менеджеру."""
     notes = client.get("notes", "").strip() or "— нет"
     stage = client.get("stage", STAGES[0])
+    reminder_date = str(client.get("reminder_date", "")).strip()
+    reminder_line = f"\n🔔 Напоминание: {reminder_date} в 08:00" if reminder_date else ""
     return (
         f"📋 Сводка по @{username}\n\n"
         f"Имя: {client.get('name') or '—'}\n"
@@ -80,19 +89,32 @@ def build_summary(username: str, client: dict) -> str:
         f"Депозит: {client.get('deposit') or '—'}\n"
         f"Формат торговли: {client.get('format') or '—'}\n"
         f"Дата старта: {client.get('created_date') or '—'}\n"
-        f"Этап: {get_stage_name(stage)} ({get_progress(stage)})\n\n"
+        f"Этап: {get_stage_name(stage)} ({get_progress(stage)}){reminder_line}\n\n"
         f"📝 Заметки:\n{notes}"
     )
 
 
-def build_today_digest():
-    """Собирает дайджест срочных задач: (текст, клавиатура) или (None, None)."""
+async def build_today_digest():
+    """Собирает дайджест срочных задач: (текст, клавиатура) или (None, None).
+
+    Клиент попадает в дайджест по двум независимым причинам: обычная
+    срочность (ранний этап / давно не было контакта) или наступившая дата
+    ручного напоминания (idea 2, /remind и шаг настройки в /new). Разовое
+    напоминание снимается сразу после того, как попало в дайджест — не
+    важно, вызван ли дайджест вручную (/today) или по расписанию в 08:00.
+    """
     if not len(repo):
         return None, None
 
     now = datetime.now()
-    urgent = [(u, d, (now - d.get("last_contact", now)).days) for u, d in repo.items()
-              if d.get("stage_index", 0) <= 2 or (now - d.get("last_contact", now)).days >= 3]
+    today_str = now.strftime("%Y-%m-%d")
+    urgent = []
+    for u, d in repo.items():
+        days = (now - d.get("last_contact", now)).days
+        reminder_date = str(d.get("reminder_date", "")).strip()
+        reminder_due = bool(reminder_date) and reminder_date <= today_str
+        if d.get("stage_index", 0) <= 2 or days >= 3 or reminder_due:
+            urgent.append((u, d, days, reminder_due))
 
     if not urgent:
         return None, None
@@ -100,10 +122,19 @@ def build_today_digest():
     text = f"📅 Задачи на сегодня ({len(urgent)} срочных)\n\n"
     keyboard = []
 
-    for username, data, days in sorted(urgent, key=lambda x: (-x[2], x[1].get("stage_index", 99))):
+    # Напоминания — в начале списка (осознанное действие оператора важнее
+    # автоматической срочности по этапу/давности)
+    for username, data, days, reminder_due in sorted(
+        urgent, key=lambda x: (not x[3], -x[2], x[1].get("stage_index", 99))
+    ):
         name = data.get("name", username)
         stage = data.get("stage")
-        emoji = "🔴" if days >= 3 else "🟠"
+        if reminder_due:
+            emoji = "🔔"
+        elif days >= 3:
+            emoji = "🔴"
+        else:
+            emoji = "🟠"
         text += f"{emoji} @{username} — {name}\n   Этап: {stage} ({days} дней)\n\n"
 
         keyboard.append([
@@ -113,6 +144,9 @@ def build_today_digest():
         keyboard.append([
             InlineKeyboardButton("Отметить контакт", callback_data=f"contacted_{username}"),
         ])
+
+        if reminder_due:
+            await repo.update_field(username, "reminder_date", "")
 
     return text, InlineKeyboardMarkup(keyboard)
 
@@ -173,14 +207,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/reload — перечитать таблицу из Google Sheets\n"
         "/delete @username — удалить клиента (с подтверждением)\n"
         "/idea текст — записать идею по улучшению бота на будущее\n"
-        "/ideas — посмотреть последние записанные идеи\n\n"
+        "/ideas — посмотреть последние записанные идеи\n"
+        "/remind @username N — напомнить об этом клиенте через N дней в 08:00\n\n"
         "Главный инструмент: /today"
     )
 
 
 @restricted
 async def today(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text, markup = build_today_digest()
+    text, markup = await build_today_digest()
     if text is None:
         if not len(repo):
             await update.message.reply_text("Сегодня задач нет.")
@@ -392,6 +427,38 @@ async def show_ideas(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @restricted
+async def remind(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    usage = (
+        "Использование: /remind @username N — напомнить через N дней в 08:00 "
+        "(0 — сегодня)\n/remind @username - — снять напоминание"
+    )
+    if len(context.args) < 2:
+        await update.message.reply_text(usage)
+        return
+    username = parse_username(context.args[0])
+    if username not in repo:
+        await update.message.reply_text("Клиент не найден.")
+        return
+    raw = context.args[1].strip()
+
+    if raw == "-":
+        await repo.update_field(username, "reminder_date", "")
+        await update.message.reply_text(f"🔕 Напоминание для @{username} снято.")
+        return
+
+    if not raw.isdigit():
+        await update.message.reply_text(usage)
+        return
+
+    days = int(raw)
+    reminder_date = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
+    await repo.update_field(username, "reminder_date", reminder_date)
+    await update.message.reply_text(
+        f"🔔 Напоминание для @{username} установлено на {reminder_date} в 08:00 (через {days} дн.)"
+    )
+
+
+@restricted
 async def activate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("Использование: /activate @username")
@@ -467,7 +534,7 @@ async def new_client_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["new_client"] = {}
     await update.message.reply_text(
         "➕ Новый клиент\n\n"
-        "Шаг 1/6. Отправь @username клиента в Telegram.\n"
+        f"Шаг 1/{NEW_TOTAL_STEPS}. Отправь @username клиента в Telegram.\n"
         "Отмена в любой момент — /cancel"
     )
     return NEW_USERNAME
@@ -484,47 +551,108 @@ async def new_client_username(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return NEW_USERNAME
     context.user_data["new_client"]["username"] = username
-    await update.message.reply_text("Шаг 2/6. Имя клиента:")
+    await update.message.reply_text(f"Шаг 2/{NEW_TOTAL_STEPS}. Имя клиента:")
     return NEW_NAME
 
 
 async def new_client_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["new_client"]["name"] = update.message.text.strip()
-    await update.message.reply_text("Шаг 3/6. Опыт клиента (например: новичок / есть опыт):")
+    await update.message.reply_text(
+        f"Шаг 3/{NEW_TOTAL_STEPS}. Опыт клиента (например: новичок / есть опыт):"
+    )
     return NEW_EXPERIENCE
 
 
 async def new_client_experience(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["new_client"]["experience"] = update.message.text.strip()
-    await update.message.reply_text("Шаг 4/6. Терминал (например: MT4 / MT5):")
+    await update.message.reply_text(f"Шаг 4/{NEW_TOTAL_STEPS}. Терминал (например: MT4 / MT5):")
     return NEW_TERMINAL
 
 
 async def new_client_terminal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["new_client"]["terminal"] = update.message.text.strip()
-    await update.message.reply_text("Шаг 5/6. Депозит (например: 500):")
+    await update.message.reply_text(f"Шаг 5/{NEW_TOTAL_STEPS}. Депозит (например: 500):")
     return NEW_DEPOSIT
 
 
 async def new_client_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["new_client"]["deposit"] = update.message.text.strip()
-    await update.message.reply_text("Шаг 6/6. Способ торговли (например: авто / полуавто):")
+    await update.message.reply_text(
+        f"Шаг 6/{NEW_TOTAL_STEPS}. Способ торговли (например: авто / полуавто):"
+    )
     return NEW_FORMAT
 
 
 async def new_client_format(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["new_client"]["format"] = update.message.text.strip()
+    await update.message.reply_text(
+        f"Шаг 7/{NEW_TOTAL_STEPS}. Есть что записать сразу? Напиши заметку "
+        "или отправь «-», чтобы пропустить."
+    )
+    return NEW_NOTE
+
+
+def _reminder_keyboard() -> InlineKeyboardMarkup:
+    row = [InlineKeyboardButton(str(n), callback_data=f"newrem:{n}") for n in REMINDER_QUICK_DAYS]
+    return InlineKeyboardMarkup([row, [InlineKeyboardButton("Без напоминания", callback_data="newrem:skip")]])
+
+
+async def new_client_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    context.user_data["new_client"]["notes"] = "" if text == "-" else text
+    await update.message.reply_text(
+        f"Шаг 8/{NEW_TOTAL_STEPS}. Через сколько дней напомнить об этом клиенте (в 08:00)?\n"
+        "Нажми кнопку или введи своё число дней текстом. «-» — без напоминания.",
+        reply_markup=_reminder_keyboard(),
+    )
+    return NEW_REMINDER
+
+
+async def _finish_new_client(message, context: ContextTypes.DEFAULT_TYPE, reminder_days):
+    """Завершает диалог /new: создаёт карточку клиента (общий код для кнопки и текста)."""
     data = context.user_data.pop("new_client", {})
-    data["format"] = update.message.text.strip()
     username = data.pop("username")
+    if reminder_days is not None:
+        data["reminder_date"] = (datetime.now() + timedelta(days=reminder_days)).strftime("%Y-%m-%d")
+    else:
+        data["reminder_date"] = ""
 
     if not await repo.add_client(username, data):
-        await update.message.reply_text(f"Клиент @{username} уже существует.")
-        return ConversationHandler.END
+        await message.reply_text(f"Клиент @{username} уже существует.")
+        return
 
-    await update.message.reply_text(
+    await message.reply_text(
         f"✅ Клиент добавлен, этап: {get_stage_name(STAGES[0])} (1/{TOTAL_STAGES})\n\n"
         + build_summary(username, repo.get(username))
     )
+
+
+async def new_client_reminder_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    raw = update.message.text.strip()
+    if raw == "-":
+        await _finish_new_client(update.message, context, None)
+        return ConversationHandler.END
+    if not raw.isdigit():
+        await update.message.reply_text(
+            "Введи число дней (например 3), нажми кнопку выше, или «-», чтобы пропустить.",
+            reply_markup=_reminder_keyboard(),
+        )
+        return NEW_REMINDER
+    await _finish_new_client(update.message, context, int(raw))
+    return ConversationHandler.END
+
+
+async def new_client_reminder_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    raw = (query.data or "").split(":", 1)[-1]
+    if raw == "skip":
+        await _finish_new_client(query.message, context, None)
+    elif raw.isdigit():
+        await _finish_new_client(query.message, context, int(raw))
+    else:
+        logger.warning("Некорректный callback напоминания в /new: %r", query.data)
+        return NEW_REMINDER
     return ConversationHandler.END
 
 
@@ -536,7 +664,7 @@ async def new_client_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def build_new_client_handler() -> ConversationHandler:
-    """Собирает диалог /new: username -> имя -> опыт -> терминал -> депозит -> формат."""
+    """Диалог /new: username -> имя -> опыт -> терминал -> депозит -> формат -> заметка -> напоминание."""
     text_input = filters.TEXT & ~filters.COMMAND
     return ConversationHandler(
         entry_points=[CommandHandler("new", new_client_start)],
@@ -547,6 +675,11 @@ def build_new_client_handler() -> ConversationHandler:
             NEW_TERMINAL: [MessageHandler(text_input, new_client_terminal)],
             NEW_DEPOSIT: [MessageHandler(text_input, new_client_deposit)],
             NEW_FORMAT: [MessageHandler(text_input, new_client_format)],
+            NEW_NOTE: [MessageHandler(text_input, new_client_note)],
+            NEW_REMINDER: [
+                CallbackQueryHandler(new_client_reminder_button, pattern=r"^newrem:"),
+                MessageHandler(text_input, new_client_reminder_text),
+            ],
         },
         fallbacks=[CommandHandler("cancel", new_client_cancel)],
     )
@@ -755,7 +888,7 @@ async def auto_reload(context: ContextTypes.DEFAULT_TYPE):
 
 async def daily_reminder(context: ContextTypes.DEFAULT_TYPE):
     """Отправляет операторам дайджест срочных задач (то же, что /today)."""
-    text, markup = build_today_digest()
+    text, markup = await build_today_digest()
     if text is None:
         logger.info("Ежедневное напоминание: срочных задач нет, ничего не отправлено")
         return
@@ -812,6 +945,7 @@ def main():
     application.add_handler(CommandHandler("delete", delete_client_start))
     application.add_handler(CommandHandler("idea", add_idea))
     application.add_handler(CommandHandler("ideas", show_ideas))
+    application.add_handler(CommandHandler("remind", remind))
     application.add_handler(CallbackQueryHandler(broadcast_button, pattern=r"^bc:"))
     application.add_handler(CallbackQueryHandler(delete_client_button, pattern=r"^del:"))
     application.add_handler(CallbackQueryHandler(button_handler))

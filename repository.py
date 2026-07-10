@@ -24,6 +24,7 @@ FIELD_COLUMNS = {
     "last_contact": "последний_контакт",
     "status": "статус",
     "chat_id": "chat_id",
+    "reminder_date": "дата_напоминания",
 }
 
 USERNAME_COLUMN = "username"
@@ -109,6 +110,7 @@ class ClientRepository:
                 has_contact_col = "последний_контакт" in new_columns
                 has_status_col = "статус" in new_columns
                 has_chat_col = "chat_id" in new_columns
+                has_reminder_col = "дата_напоминания" in new_columns
 
                 for row_number, row in enumerate(values[1:], start=2):
                     if not row or not row[0]:
@@ -131,6 +133,7 @@ class ClientRepository:
                         "last_contact": _parse_last_contact(row_dict.get("последний_контакт", "")),
                         "status": row_dict.get("статус", ""),
                         "chat_id": row_dict.get("chat_id", ""),
+                        "reminder_date": row_dict.get("дата_напоминания", ""),
                     }
 
                     old = self._clients.get(username)
@@ -141,6 +144,8 @@ class ClientRepository:
                             client["status"] = old["status"]
                         if not has_chat_col and old.get("chat_id"):
                             client["chat_id"] = old["chat_id"]
+                        if not has_reminder_col and old.get("reminder_date"):
+                            client["reminder_date"] = old["reminder_date"]
 
                     new_clients[username] = client
                     new_rows[username] = row_number
@@ -247,11 +252,12 @@ class ClientRepository:
             "format": data.get("format", ""),
             "stage": STAGES[0],
             "stage_index": 0,
-            "notes": "",
+            "notes": data.get("notes", ""),
             "created_date": now.strftime("%Y-%m-%d"),
             "last_contact": now,
             "status": "",
             "chat_id": "",
+            "reminder_date": data.get("reminder_date", ""),
         }
         await asyncio.to_thread(self._append_row_with_retries, username)
         return True

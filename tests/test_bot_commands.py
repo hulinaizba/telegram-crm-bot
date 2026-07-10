@@ -1,6 +1,7 @@
 # test_bot_commands.py - Тесты обработчиков команд и диалога /new
 
 import asyncio
+from datetime import datetime, timedelta
 
 from telegram.ext import ConversationHandler
 
@@ -53,6 +54,64 @@ def test_today_lists_urgent_clients(bot_module):
     asyncio.run(bot_module.today(u, FakeContext()))
     text = u.message.replies[0]
     assert "@ivan" in text  # этап 1 (<= 3) — всегда срочный
+
+
+def test_today_includes_due_reminder_and_clears_it(bot_module, repo):
+    # petr не срочен по этапу/давности контакта — попадает в /today только из-за напоминания
+    asyncio.run(repo.update_field("petr", "reminder_date", datetime.now().strftime("%Y-%m-%d")))
+    u = FakeUpdate()
+    asyncio.run(bot_module.today(u, FakeContext()))
+    text = u.message.replies[0]
+    assert "🔔 @petr" in text
+    assert repo.get("petr")["reminder_date"] == ""  # разовое напоминание снялось после показа
+
+
+def test_today_ignores_future_reminder(bot_module, repo):
+    future = (datetime.now() + timedelta(days=5)).strftime("%Y-%m-%d")
+    asyncio.run(repo.update_field("petr", "reminder_date", future))
+    u = FakeUpdate()
+    asyncio.run(bot_module.today(u, FakeContext()))
+    text = u.message.replies[0]
+    assert "@petr" not in text
+    assert repo.get("petr")["reminder_date"] == future  # не наступило — не тронуто
+
+
+# --- /remind ---
+
+def test_remind_sets_reminder_date(bot_module, repo, fake_sheet):
+    u = FakeUpdate()
+    asyncio.run(bot_module.remind(u, FakeContext("@ivan", "2")))
+    reply = u.message.replies[0]
+    expected = (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%d")
+    assert expected in reply
+    assert repo.get("ivan")["reminder_date"] == expected
+    assert fake_sheet.rows[1][-1] == expected  # dата_напоминания — последний столбец фикстуры
+
+
+def test_remind_clears_with_dash(bot_module, repo):
+    asyncio.run(repo.update_field("ivan", "reminder_date", "2026-08-01"))
+    u = FakeUpdate()
+    asyncio.run(bot_module.remind(u, FakeContext("@ivan", "-")))
+    assert "снято" in u.message.replies[0]
+    assert repo.get("ivan")["reminder_date"] == ""
+
+
+def test_remind_requires_two_args(bot_module):
+    u = FakeUpdate()
+    asyncio.run(bot_module.remind(u, FakeContext("@ivan")))
+    assert "Использование" in u.message.replies[0]
+
+
+def test_remind_rejects_non_numeric(bot_module):
+    u = FakeUpdate()
+    asyncio.run(bot_module.remind(u, FakeContext("@ivan", "скоро")))
+    assert "Использование" in u.message.replies[0]
+
+
+def test_remind_unknown_client(bot_module):
+    u = FakeUpdate()
+    asyncio.run(bot_module.remind(u, FakeContext("@nobody", "1")))
+    assert "не найден" in u.message.replies[0]
 
 
 # --- /note и /notes ---
@@ -279,8 +338,8 @@ def test_auto_reload_job(bot_module, repo, fake_sheet):
 
 # --- Диалог /new ---
 
-def run_new_dialog(bot_module, ctx, answers):
-    """Прогоняет диалог /new по шагам, возвращает последний FakeUpdate."""
+def run_new_dialog_to_reminder(bot_module, ctx, answers):
+    """Прогоняет диалог /new по шагам 1-7 (до вопроса про напоминание)."""
     u = FakeUpdate()
     asyncio.run(bot_module.new_client_start(u, ctx))
     steps = [
@@ -290,6 +349,7 @@ def run_new_dialog(bot_module, ctx, answers):
         bot_module.new_client_terminal,
         bot_module.new_client_deposit,
         bot_module.new_client_format,
+        bot_module.new_client_note,
     ]
     for step, answer in zip(steps, answers):
         u = FakeUpdate(answer)
@@ -297,17 +357,77 @@ def run_new_dialog(bot_module, ctx, answers):
     return u, state
 
 
-def test_new_client_full_dialog(bot_module, repo, fake_sheet):
+BASE_ANSWERS = ["@Maria_FX", "Мария", "новичок", "MT5", "500", "авто"]
+
+
+def test_new_client_note_step_prompts_reminder(bot_module):
     ctx = FakeContext()
-    u, state = run_new_dialog(
-        bot_module, ctx,
-        ["@Maria_FX", "Мария", "новичок", "MT5", "500", "авто"],
+    u, state = run_new_dialog_to_reminder(
+        bot_module, ctx, BASE_ANSWERS + ["Просил перезвонить вечером"],
     )
+    assert state == bot_module.NEW_REMINDER
+    assert "Шаг 8/8" in u.message.replies[-1]
+    assert ctx.user_data["new_client"]["notes"] == "Просил перезвонить вечером"
+
+
+def test_new_client_note_skip_with_dash(bot_module):
+    ctx = FakeContext()
+    run_new_dialog_to_reminder(bot_module, ctx, BASE_ANSWERS + ["-"])
+    assert ctx.user_data["new_client"]["notes"] == ""
+
+
+def test_new_client_reminder_via_text_creates_client(bot_module, repo, fake_sheet):
+    ctx = FakeContext()
+    run_new_dialog_to_reminder(bot_module, ctx, BASE_ANSWERS + ["-"])
+    u = FakeUpdate("3")
+    state = asyncio.run(bot_module.new_client_reminder_text(u, ctx))
     assert state == ConversationHandler.END
-    assert "Клиент добавлен" in u.message.replies[0]
-    assert "(1/7)" in u.message.replies[0]
-    assert repo.get("maria_fx")["deposit"] == "500"
+    reply = u.message.replies[0]
+    assert "Клиент добавлен" in reply and "(1/7)" in reply
+    expected = (datetime.now() + timedelta(days=3)).strftime("%Y-%m-%d")
+    assert repo.get("maria_fx")["reminder_date"] == expected
+    assert f"🔔 Напоминание: {expected} в 08:00" in reply
     assert fake_sheet.rows[-1][0] == "@maria_fx"
+
+
+def test_new_client_reminder_skip_via_dash(bot_module, repo):
+    ctx = FakeContext()
+    run_new_dialog_to_reminder(bot_module, ctx, BASE_ANSWERS + ["-"])
+    u = FakeUpdate("-")
+    state = asyncio.run(bot_module.new_client_reminder_text(u, ctx))
+    assert state == ConversationHandler.END
+    assert repo.get("maria_fx")["reminder_date"] == ""
+
+
+def test_new_client_reminder_invalid_text_reprompts(bot_module, repo):
+    ctx = FakeContext()
+    run_new_dialog_to_reminder(bot_module, ctx, BASE_ANSWERS + ["-"])
+    u = FakeUpdate("завтра")
+    state = asyncio.run(bot_module.new_client_reminder_text(u, ctx))
+    assert state == bot_module.NEW_REMINDER
+    assert "maria_fx" not in repo  # клиент ещё не создан, ждём корректный ввод
+
+
+def test_new_client_reminder_via_button(bot_module, repo, fake_sheet):
+    ctx = FakeContext()
+    run_new_dialog_to_reminder(bot_module, ctx, BASE_ANSWERS + ["-"])
+    u = FakeUpdate()
+    u.callback_query = FakeCallbackQuery("newrem:5")
+    state = asyncio.run(bot_module.new_client_reminder_button(u, ctx))
+    assert state == ConversationHandler.END
+    expected = (datetime.now() + timedelta(days=5)).strftime("%Y-%m-%d")
+    assert repo.get("maria_fx")["reminder_date"] == expected
+    assert "Клиент добавлен" in u.callback_query.message.replies[0]
+
+
+def test_new_client_reminder_button_skip(bot_module, repo):
+    ctx = FakeContext()
+    run_new_dialog_to_reminder(bot_module, ctx, BASE_ANSWERS + ["-"])
+    u = FakeUpdate()
+    u.callback_query = FakeCallbackQuery("newrem:skip")
+    state = asyncio.run(bot_module.new_client_reminder_button(u, ctx))
+    assert state == ConversationHandler.END
+    assert repo.get("maria_fx")["reminder_date"] == ""
 
 
 def test_new_client_duplicate_username_stays_on_step_one(bot_module):
