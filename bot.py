@@ -427,6 +427,10 @@ def build_client_edit_handler() -> ConversationHandler:
         states={
             CLIENT_EDIT_VALUE: [MessageHandler(text_input, client_edit_apply)],
         },
+        # Вход через CallbackQueryHandler, завершение текстом — PTB предупреждает
+        # об этом при старте (см. такой же комментарий у build_new_client_handler).
+        # Безопасно: на карточке клиента в любой момент активен только один
+        # запрос значения.
         fallbacks=[CommandHandler("cancel", client_edit_cancel)],
     )
 
