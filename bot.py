@@ -681,6 +681,11 @@ def build_new_client_handler() -> ConversationHandler:
                 MessageHandler(text_input, new_client_reminder_text),
             ],
         },
+        # На шаге NEW_REMINDER смешаны CallbackQueryHandler и MessageHandler —
+        # PTB предупреждает об этом при старте (per_message=False по умолчанию
+        # не отслеживает кнопки для каждого отдельного сообщения). Для нас это
+        # безопасно: на этом шаге за раз активно только одно сообщение с
+        # кнопками, конкурентных диалогов с несколькими наборами кнопок нет.
         fallbacks=[CommandHandler("cancel", new_client_cancel)],
     )
 
