@@ -23,8 +23,8 @@ def _int_env(name: str, default: int) -> int:
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 
 # Список операторов с доступом к боту.
-# Можно переопределить через .env: ALLOWED_USERS=5769727981,6492135923
-_default_allowed = "5769727981,6492135923"
+# Задаётся через .env: ALLOWED_USERS=123456789,987654321
+_default_allowed = ""
 ALLOWED_USERS = [
     int(uid) for uid in os.getenv("ALLOWED_USERS", _default_allowed).split(",")
     if uid.strip().isdigit()
